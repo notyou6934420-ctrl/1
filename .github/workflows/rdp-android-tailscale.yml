@@ -1,0 +1,89 @@
+name: Android RDP + Tailscale
+
+on:
+  workflow_dispatch:
+    inputs:
+      ts_tailnet:      { description: "Tailscale tailnet (e.g. you@gmail.com)", required: true }
+      ts_authkey:      { description: "Tailscale authkey (reusable or ephemeral)", required: true }
+      ts_api_key:      { description: "Tailscale API key (device admin, no Bearer)", required: true }
+      rdp_user:        { description: "RDP username", required: false, default: "ubuntu" }
+      rdp_pass:        { description: "RDP password", required: false, default: "Bullet@12345" }
+      quick_test:      { description: "Run 5-minute test", type: boolean, default: false }
+      runtime_minutes: { description: "Runtime minutes (max 360)", required: false, default: "355" }
+
+jobs:
+  desktop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 370
+    steps:
+      - name: Prepare root sudoers
+        run: |
+          sudo cp /etc/sudoers /etc/sudoers.bak
+          echo "runner ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/runner
+          sudo chmod 440 /etc/sudoers.d/runner
+
+      - name: Create user and set password
+        run: |
+          U="${{ inputs.rdp_user }}"
+          P="${{ inputs.rdp_pass }}"
+          if ! id "$U" >/dev/null 2>&1; then
+            sudo useradd -m -s /bin/bash "$U"
+          fi
+          echo "$U:$P" | sudo chpasswd
+          echo "$U ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/"$U"
+          sudo chmod 440 /etc/sudoers.d/"$U"
+          sudo mkdir -p /home/"$U"/.ssh
+          sudo chown -R "$U":"$U" /home/"$U"/.ssh
+
+      - name: Update and install desktop + xrdp + tools
+        run: |
+          sudo apt-get update -y
+          sudo apt-get upgrade -y
+          # Lightweight desktop and xrdp
+          sudo apt-get install -y xfce4 xfce4-goodies xrdp dbus-x11 x11-xserver-utils curl jq
+          # Optional utilities
+          sudo apt-get install -y neofetch htop
+
+      - name: Configure XFCE for xrdp
+        run: |
+          U="${{ inputs.rdp_user }}"
+          # Ensure Xsession starts XFCE
+          echo "startxfce4" | sudo tee /home/"$U"/.xsession
+          sudo chown "$U":"$U" /home/"$U"/.xsession
+          # Allow xrdp user access
+          sudo adduser xrdp ssl-cert || true
+          sudo systemctl enable xrdp
+          sudo systemctl restart xrdp
+          # Ensure xrdp listens
+          sudo ss -tnlp | grep -E "3389|xrdp" || true
+
+      - name: Install Tailscale and connect
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+          sudo tailscale logout || true
+          HOST="${{ inputs.rdp_user }}-desktop"
+          sudo tailscale up --authkey "${{ inputs.ts_authkey }}" --hostname "$HOST" --accept-dns=true --accept-routes=true
+          ip4=$(tailscale ip -4 | head -n1)
+          echo "TAILSCALE_IP=$ip4" >> $GITHUB_ENV
+          echo "Tailscale IPv4: $ip4"
+
+      - name: Print Android RDP instructions
+        run: |
+          ip="$TAILSCALE_IP"
+          echo "---- CONNECTION DETAILS ----"
+          echo "RDP host: ${ip}:3389"
+          echo "Username: ${{ inputs.rdp_user }}"
+          echo "Password: ${{ inputs.rdp_pass }}"
+          echo
+          echo "On Android: install 'Microsoft Remote Desktop' (or any RDP client)."
+          echo "Create a new desktop with address ${ip}:3389 and the username/password above."
+          echo "For best results use a 2G/3G/4G/Wi-Fi connection and set color depth to 16-bit in the client."
+
+      - name: Keep runner alive
+        run: |
+          mins=${{ inputs.runtime_minutes }}
+          if [ "${{ inputs.quick_test }}" = "true" ]; then mins=5; fi
+          [ "$mins" -gt 360 ] && mins=355
+          echo "Running for $mins minutes..."
+          sleep $(( mins * 60 ))
+          echo "Session finished."
