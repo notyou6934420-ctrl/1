@@ -1,0 +1,59 @@
+name: Ubuntu VPS + Tailscale
+
+on:
+  workflow_dispatch:
+    inputs:
+      ts_tailnet:       { description: "Tailscale tailnet (e.g. you@gmail.com)", required: true }
+      ts_api_key:       { description: "Tailscale API key (device admin, no Bearer)", required: true }
+      ts_authkey:       { description: "Tailscale Auth key (reusable or ephemeral)", required: true }
+      quick_test:       { description: "Run 5-minute test", type: boolean, default: false }
+      runtime_minutes:  { description: "Runtime (max 360; default 355 when not test)", required: false, default: "355" }
+      do_purge:         { description: "Purge bullet* devices first", required: false, default: "true" }
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  vps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 370
+    steps:
+      - name: Purge old bullet* devices
+        run: |
+          function Yes() { [[ "$1" =~ ^(true|1|yes|on)$ ]]; }
+          if Yes "${{ inputs.do_purge }}"; then
+            auth=$(echo -n "${{ inputs.ts_api_key }}:" | base64)
+            tn=$(python3 -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))' "${{ inputs.ts_tailnet }}")
+            curl -s -u "${{ inputs.ts_api_key }}:" "https://api.tailscale.com/api/v2/tailnet/$tn/devices" \
+            | jq -r '.devices[] | select(.hostname | test("^bullet[0-9]*$")) | .id' \
+            | while read -r id; do
+                curl -s -u "${{ inputs.ts_api_key }}:" -X DELETE "https://api.tailscale.com/api/v2/device/$id" >/dev/null
+              done
+            echo "Purged old bullet devices"
+          else
+            echo "Purge skipped"
+          fi
+
+      - name: Install Tailscale
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+
+      - name: Connect to Tailscale
+        run: |
+          sudo tailscale logout || true
+          sudo tailscale up --authkey "${{ inputs.ts_authkey }}" --hostname "bullet" --ssh --accept-dns=true --accept-routes=true
+          ip4=$(tailscale ip -4 | head -n1)
+          echo "TAILSCALE_IP=$ip4" >> $GITHUB_ENV
+          echo "Tailscale IPv4: $ip4"
+          echo "To SSH: ssh ubuntu@$ip4"
+
+      - name: Keep alive
+        run: |
+          mins=${{ inputs.runtime_minutes }}
+          if [ "${{ inputs.quick_test }}" = "true" ]; then mins=5; fi
+          [ "$mins" -gt 360 ] && mins=355
+          end=$((mins*60))
+          echo "Running for $mins minutes..."
+          sleep $end
+          echo "Session ended."
