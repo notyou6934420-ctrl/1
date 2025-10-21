@@ -1,89 +1,68 @@
-name: Android RDP + Tailscale
+name: Android-x86 RDP/NoVNC + Serveo
 
 on:
   workflow_dispatch:
     inputs:
-      ts_tailnet:      { description: "Tailscale tailnet (e.g. you@gmail.com)", required: true }
-      ts_authkey:      { description: "Tailscale authkey (reusable or ephemeral)", required: true }
-      ts_api_key:      { description: "Tailscale API key (device admin, no Bearer)", required: true }
-      rdp_user:        { description: "RDP username", required: false, default: "ubuntu" }
-      rdp_pass:        { description: "RDP password", required: false, default: "Bullet@12345" }
-      quick_test:      { description: "Run 5-minute test", type: boolean, default: false }
-      runtime_minutes: { description: "Runtime minutes (max 360)", required: false, default: "355" }
+      iso_url:
+        description: "Android-x86 ISO URL"
+        required: true
+      ram_mb:
+        description: "RAM for Android VM (MB)"
+        required: false
+        default: 2048
+      runtime_minutes:
+        description: "Runtime in minutes"
+        required: false
+        default: 355
 
 jobs:
-  desktop:
+  android-novnc:
     runs-on: ubuntu-latest
-    timeout-minutes: 370
     steps:
-      - name: Prepare root sudoers
+      - name: Install dependencies
         run: |
-          sudo cp /etc/sudoers /etc/sudoers.bak
-          echo "runner ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/runner
-          sudo chmod 440 /etc/sudoers.d/runner
+          sudo apt update
+          sudo apt install -y qemu-system-x86 novnc websockify wget openssh-client
 
-      - name: Create user and set password
+      - name: Download Android-x86 ISO
         run: |
-          U="${{ inputs.rdp_user }}"
-          P="${{ inputs.rdp_pass }}"
-          if ! id "$U" >/dev/null 2>&1; then
-            sudo useradd -m -s /bin/bash "$U"
-          fi
-          echo "$U:$P" | sudo chpasswd
-          echo "$U ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/"$U"
-          sudo chmod 440 /etc/sudoers.d/"$U"
-          sudo mkdir -p /home/"$U"/.ssh
-          sudo chown -R "$U":"$U" /home/"$U"/.ssh
+          wget -O android.iso "${{ inputs.iso_url }}"
 
-      - name: Update and install desktop + xrdp + tools
+      - name: Create disk image
         run: |
-          sudo apt-get update -y
-          sudo apt-get upgrade -y
-          # Lightweight desktop and xrdp
-          sudo apt-get install -y xfce4 xfce4-goodies xrdp dbus-x11 x11-xserver-utils curl jq
-          # Optional utilities
-          sudo apt-get install -y neofetch htop
+          qemu-img create -f qcow2 android_disk.qcow2 8G
 
-      - name: Configure XFCE for xrdp
+      - name: Launch Android-x86 headless + VNC
         run: |
-          U="${{ inputs.rdp_user }}"
-          # Ensure Xsession starts XFCE
-          echo "startxfce4" | sudo tee /home/"$U"/.xsession
-          sudo chown "$U":"$U" /home/"$U"/.xsession
-          # Allow xrdp user access
-          sudo adduser xrdp ssl-cert || true
-          sudo systemctl enable xrdp
-          sudo systemctl restart xrdp
-          # Ensure xrdp listens
-          sudo ss -tnlp | grep -E "3389|xrdp" || true
+          # Start Android VM headless on VNC :1
+          qemu-system-x86_64 \
+            -m "${{ inputs.ram_mb }}" \
+            -hda android_disk.qcow2 \
+            -cdrom android.iso \
+            -boot d \
+            -net nic -net user \
+            -vnc :1 \
+            -no-reboot \
+            -enable-kvm \
+            -cpu host \
+            -display none &
+          sleep 5
 
-      - name: Install Tailscale and connect
-        run: |
-          curl -fsSL https://tailscale.com/install.sh | sh
-          sudo tailscale logout || true
-          HOST="${{ inputs.rdp_user }}-desktop"
-          sudo tailscale up --authkey "${{ inputs.ts_authkey }}" --hostname "$HOST" --accept-dns=true --accept-routes=true
-          ip4=$(tailscale ip -4 | head -n1)
-          echo "TAILSCALE_IP=$ip4" >> $GITHUB_ENV
-          echo "Tailscale IPv4: $ip4"
+          # Start websockify for noVNC access
+          websockify 6080 localhost:5901 &
+          sleep 2
 
-      - name: Print Android RDP instructions
+      - name: Open Serveo reverse tunnel & print public URL
         run: |
-          ip="$TAILSCALE_IP"
-          echo "---- CONNECTION DETAILS ----"
-          echo "RDP host: ${ip}:3389"
-          echo "Username: ${{ inputs.rdp_user }}"
-          echo "Password: ${{ inputs.rdp_pass }}"
-          echo
-          echo "On Android: install 'Microsoft Remote Desktop' (or any RDP client)."
-          echo "Create a new desktop with address ${ip}:3389 and the username/password above."
-          echo "For best results use a 2G/3G/4G/Wi-Fi connection and set color depth to 16-bit in the client."
+          # Serveo reverse tunnel
+          URL=$(ssh -o StrictHostKeyChecking=no -R 0:localhost:6080 serveo.net 2>&1 | grep -oE 'https://[a-z0-9.-]+\.serveo.net')
+          echo "noVNC public URL: $URL"
 
-      - name: Keep runner alive
+      - name: Keep VM alive
         run: |
-          mins=${{ inputs.runtime_minutes }}
-          if [ "${{ inputs.quick_test }}" = "true" ]; then mins=5; fi
-          [ "$mins" -gt 360 ] && mins=355
-          echo "Running for $mins minutes..."
-          sleep $(( mins * 60 ))
-          echo "Session finished."
+          RUNTIME=${{ inputs.runtime_minutes }}
+          END=$((SECONDS + RUNTIME * 60))
+          while [ $SECONDS -lt $END ]; do
+            echo "[Android-x86] Heartbeat $(date) | Runtime ends in $(( ($END - $SECONDS)/60 )) min"
+            sleep 60
+          done
