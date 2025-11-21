@@ -1,10 +1,10 @@
-name: Android-x86 VM + RustDesk + Tailscale
+name: Android Emulator + RustDesk + Tailscale
 
 on:
   workflow_dispatch:
     inputs:
       runtime_minutes:
-        description: "Keep VM alive for how many minutes"
+        description: "Keep emulator alive (minutes)"
         required: false
         default: "60"
       ts_authkey:
@@ -12,59 +12,60 @@ on:
         required: true
 
 jobs:
-  android_vm:
+  android_emulator:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
       - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y qemu-system-x86 adb curl unzip wget python3 python3-pip
+          sudo apt install -y unzip wget curl python3 python3-pip adb
 
-      - name: Download Android-x86 ISO (SourceForge)
+      - name: Install Android SDK
         run: |
-          mkdir -p $HOME/android
-          cd $HOME/android
-          wget -O android.iso "https://downloads.sourceforge.net/project/android-x86/Release%209.0/android-x86_64-9.0-r2.iso"
-          qemu-img create -f qcow2 android_disk.qcow2 8G
+          mkdir -p $HOME/android-sdk
+          cd $HOME/android-sdk
+          wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O cmdline-tools.zip
+          unzip cmdline-tools.zip
+          rm cmdline-tools.zip
+          mkdir -p cmdline-tools/latest
+          mv cmdline-tools/* cmdline-tools/latest/
+          yes | $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=$HOME/android-sdk "platform-tools" "emulator" "system-images;android-30;google_apis;x86"
 
-      - name: Start Android-x86 VM
+      - name: Create AVD
         run: |
-          cd $HOME/android
-          qemu-system-x86_64 \
-            -m 2048 \
-            -smp 2 \
-            -boot d \
-            -cdrom android.iso \
-            -hda android_disk.qcow2 \
-            -net nic -net user,hostfwd=tcp::5555-:5555 \
-            -enable-kvm \
-            -vnc 0.0.0.0:1 \
-            -daemonize
-          echo "VM started. Waiting 90s for boot..."
-          sleep 90
+          mkdir -p $HOME/.android/avd
+          echo "no" | $HOME/android-sdk/cmdline-tools/latest/bin/avdmanager create avd -n github_avd -k "system-images;android-30;google_apis;x86" --force
+
+      - name: Start emulator headless
+        run: |
+          $HOME/android-sdk/emulator/emulator -avd github_avd -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -port 5554 &
+          echo "Waiting 60s for emulator to boot..."
+          sleep 60
+          adb wait-for-device
+          adb shell 'while [[ -z $(getprop sys.boot_completed) || $(getprop sys.boot_completed) != "1" ]]; do sleep 5; done'
+          echo "Emulator booted"
 
       - name: Download Tailscale APK
         run: |
-          mkdir -p $HOME/android/apks
-          cd $HOME/android/apks
+          mkdir -p $HOME/apks
+          cd $HOME/apks
           wget -O tailscale.apk https://pkgs.tailscale.com/stable/tailscale_1.82.0.apk
 
       - name: Download RustDesk APK
         run: |
-          cd $HOME/android/apks
+          cd $HOME/apks
           wget -O rustdesk.apk https://github.com/rustdesk/rustdesk/releases/download/1.3.1/rustdesk-1.3.1.apk
 
       - name: Install APKs via ADB
         run: |
-          adb connect localhost:5555
-          adb install -r $HOME/android/apks/tailscale.apk
-          adb install -r $HOME/android/apks/rustdesk.apk
+          adb install -r $HOME/apks/tailscale.apk
+          adb install -r $HOME/apks/rustdesk.apk
 
-      - name: Start Tailscale on Android-x86
+      - name: Start Tailscale
         run: |
           adb shell am start -n com.tailscale.ipn/.MainActivity
-          adb shell "su -c 'tailscale up --authkey=${{ inputs.ts_authkey }} --accept-routes --hostname=android-vm-github'"
+          adb shell "su -c 'tailscale up --authkey=${{ inputs.ts_authkey }} --accept-routes --hostname=android-emulator-github'"
           sleep 20
           IP=$(adb shell "ip addr show tun0 | grep 'inet ' | awk '{print \$2}' | cut -d/ -f1")
           echo "TAILSCALE_IP=$IP" >> $GITHUB_ENV
@@ -73,14 +74,13 @@ jobs:
       - name: Launch RustDesk (foreground)
         run: |
           adb shell am start -n "app.rustdesk/.MainActivity"
-          sleep 10
-          echo "RustDesk should now be running inside Android VM"
+          echo "RustDesk launched inside emulator"
 
-      - name: Keep VM alive
+      - name: Keep emulator alive
         run: |
           RUNTIME=${{ inputs.runtime_minutes }}
           END=$(( $(date +%s) + RUNTIME*60 ))
           while [ $(date +%s) -lt $END ]; do
-            echo "VM alive: $(date) | Tailscale IP: ${{ env.TAILSCALE_IP }}"
+            echo "Emulator alive: $(date) | Tailscale IP: ${{ env.TAILSCALE_IP }}"
             sleep 60
           done
