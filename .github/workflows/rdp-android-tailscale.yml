@@ -28,8 +28,10 @@ jobs:
           wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O cmdline-tools.zip
           unzip cmdline-tools.zip
           rm cmdline-tools.zip
-          # Move extracted folder to the expected path
-          mv cmdline-tools cmdline-tools/latest
+          # Rename extracted folder to 'latest'
+          mv cmdline-tools cmdline-tools_temp
+          mkdir -p cmdline-tools/latest
+          mv cmdline-tools_temp/* cmdline-tools/latest/
           yes | $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=$HOME/android-sdk "platform-tools" "emulator" "system-images;android-30;google_apis;x86"
 
       - name: Create AVD
