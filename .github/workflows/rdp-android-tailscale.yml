@@ -19,17 +19,17 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y unzip wget curl python3 python3-pip adb
+          sudo apt install -y unzip wget curl python3 python3-pip adb openjdk-11-jdk
 
       - name: Install Android SDK
         run: |
-          mkdir -p $HOME/android-sdk
+          mkdir -p $HOME/android-sdk/cmdline-tools
           cd $HOME/android-sdk
           wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O cmdline-tools.zip
           unzip cmdline-tools.zip
           rm cmdline-tools.zip
-          mkdir -p cmdline-tools/latest
-          mv cmdline-tools/* cmdline-tools/latest/
+          # Move extracted folder to the expected path
+          mv cmdline-tools cmdline-tools/latest
           yes | $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=$HOME/android-sdk "platform-tools" "emulator" "system-images;android-30;google_apis;x86"
 
       - name: Create AVD
