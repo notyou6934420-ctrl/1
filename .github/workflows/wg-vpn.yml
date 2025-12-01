@@ -28,8 +28,9 @@ jobs:
           wg genkey | tee privatekey | wg pubkey > publickey
 
       - name: Create wg0.conf
+        shell: bash
         run: |
-          cat <<EOF > wg0.conf
+          cat > wg0.conf <<'EOF'
 [Interface]
 PrivateKey = $(cat privatekey)
 Address = 10.8.0.2/24
@@ -57,14 +58,12 @@ EOF
           echo "$UPLOAD" > gofile_response.json
 
       - name: Show download link
-        run: |
-          cat gofile_response.json
+        run: cat gofile_response.json
 
       - name: Keep alive
         run: |
           mins=${{ inputs.runtime_minutes }}
           if [ "${{ inputs.quick_test }}" = "true" ]; then mins=5; fi
-          # GitHub safety cap
           [ "$mins" -gt 30 ] && mins=30
           end=$((mins*60))
           echo "Keeping job active for $mins minutes..."
