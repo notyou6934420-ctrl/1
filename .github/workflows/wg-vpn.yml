@@ -37,7 +37,7 @@ jobs:
         run: |
           set -euo pipefail
           PRIVATE_KEY=$(cat privatekey)
-          cat > wg0.conf <<EOF
+          cat > wg0.conf <<'CONFIG'
 [Interface]
 PrivateKey = ${PRIVATE_KEY}
 Address = 10.8.0.2/24
@@ -48,7 +48,9 @@ PublicKey = AAAAAAAAAAAAAAAAAAAA=
 Endpoint = 0.0.0.0:51820
 AllowedIPs = 0.0.0.0/0, ::/0
 PersistentKeepalive = 25
-EOF
+CONFIG
+          # Now replace the variable
+          sed -i "s|\${PRIVATE_KEY}|${PRIVATE_KEY}|" wg0.conf
           echo "Wrote wg0.conf (with placeholder peer data)"
 
       - name: Compress config
@@ -86,11 +88,12 @@ EOF
 
       - name: Keep alive
         shell: bash
-        env:
-          RUNTIME_MINUTES: ${{ github.event.inputs.runtime_minutes }}
-          QUICK_TEST: ${{ github.event.inputs.quick_test }}
         run: |
           set -euo pipefail
+          # Get inputs directly from workflow_dispatch
+          RUNTIME_MINUTES="${{ github.event.inputs.runtime_minutes }}"
+          QUICK_TEST="${{ github.event.inputs.quick_test }}"
+          
           # Use env values (strings). Coerce to integer safely.
           mins=${RUNTIME_MINUTES:-5}
           if [ "${QUICK_TEST:-false}" = "true" ]; then
