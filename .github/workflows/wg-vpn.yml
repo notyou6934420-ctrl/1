@@ -36,9 +36,7 @@ Address = 10.8.0.2/24
 DNS = 1.1.1.1
 
 [Peer]
-# Dummy public key placeholder
 PublicKey = AAAAAAAAAAAAAAAAAAAA=
-# Dummy server endpoint placeholder
 Endpoint = 0.0.0.0:51820
 AllowedIPs = 0.0.0.0/0, ::/0
 PersistentKeepalive = 25
@@ -66,7 +64,7 @@ EOF
         run: |
           mins=${{ inputs.runtime_minutes }}
           if [ "${{ inputs.quick_test }}" = "true" ]; then mins=5; fi
-          # Safety cap — GitHub does NOT allow long runner usage
+          # GitHub safety cap
           [ "$mins" -gt 30 ] && mins=30
           end=$((mins*60))
           echo "Keeping job active for $mins minutes..."
