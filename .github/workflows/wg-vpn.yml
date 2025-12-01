@@ -87,8 +87,8 @@ EOF
       - name: Keep alive
         shell: bash
         env:
-          RUNTIME_MINUTES: ${{ inputs.runtime_minutes }}
-          QUICK_TEST: ${{ inputs.quick_test }}
+          RUNTIME_MINUTES: ${{ github.event.inputs.runtime_minutes }}
+          QUICK_TEST: ${{ github.event.inputs.quick_test }}
         run: |
           set -euo pipefail
           # Use env values (strings). Coerce to integer safely.
