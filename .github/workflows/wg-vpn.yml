@@ -18,21 +18,28 @@ jobs:
 
     steps:
       - name: Install WireGuard
+        shell: bash
         run: |
-          sudo apt update
-          sudo apt install -y wireguard-tools
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y wireguard-tools zip curl
 
       - name: Generate private/public keys
+        shell: bash
         run: |
+          set -euo pipefail
           umask 077
           wg genkey | tee privatekey | wg pubkey > publickey
+          echo "Generated privatekey and publickey"
 
       - name: Create wg0.conf
         shell: bash
         run: |
-          cat > wg0.conf <<'EOF'
+          set -euo pipefail
+          PRIVATE_KEY=$(cat privatekey)
+          cat > wg0.conf <<EOF
 [Interface]
-PrivateKey = $(cat privatekey)
+PrivateKey = ${PRIVATE_KEY}
 Address = 10.8.0.2/24
 DNS = 1.1.1.1
 
@@ -42,30 +49,63 @@ Endpoint = 0.0.0.0:51820
 AllowedIPs = 0.0.0.0/0, ::/0
 PersistentKeepalive = 25
 EOF
+          echo "Wrote wg0.conf (with placeholder peer data)"
 
       - name: Compress config
+        shell: bash
         run: |
-          zip wireguard_config.zip wg0.conf privatekey publickey
+          set -euo pipefail
+          zip -j wireguard_config.zip wg0.conf privatekey publickey
+          echo "Created wireguard_config.zip"
 
       - name: Upload to GoFile
+        shell: bash
         env:
           GOFILE_TOKEN: ${{ secrets.GOFILE_TOKEN }}
         run: |
-          UPLOAD=$(curl -F "file=@wireguard_config.zip" \
-            -F "token=${GOFILE_TOKEN}" \
-            "https://api.gofile.io/upload")
-          echo "$UPLOAD"
-          echo "$UPLOAD" > gofile_response.json
+          set -euo pipefail
+          if [ -z "${GOFILE_TOKEN:-}" ]; then
+            echo "GOFILE_TOKEN secret is missing. Set it in repository secrets."
+            exit 1
+          fi
+          response=$(curl -s -F "file=@wireguard_config.zip" -F "token=${GOFILE_TOKEN}" "https://api.gofile.io/upload")
+          echo "$response" > gofile_response.json
+          # Print a short summary line if possible
+          echo "Upload response saved to gofile_response.json"
+          jq -r '.data.downloadPage // .data // .' gofile_response.json || true
 
       - name: Show download link
-        run: cat gofile_response.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f gofile_response.json ]; then
+            cat gofile_response.json
+          else
+            echo "No gofile_response.json found"
+          fi
 
       - name: Keep alive
+        shell: bash
+        env:
+          RUNTIME_MINUTES: ${{ inputs.runtime_minutes }}
+          QUICK_TEST: ${{ inputs.quick_test }}
         run: |
-          mins=${{ inputs.runtime_minutes }}
-          if [ "${{ inputs.quick_test }}" = "true" ]; then mins=5; fi
-          [ "$mins" -gt 30 ] && mins=30
-          end=$((mins*60))
-          echo "Keeping job active for $mins minutes..."
-          sleep $end
-          echo "Done."
+          set -euo pipefail
+          # Use env values (strings). Coerce to integer safely.
+          mins=${RUNTIME_MINUTES:-5}
+          if [ "${QUICK_TEST:-false}" = "true" ]; then
+            mins=5
+          fi
+          # Safety cap on GitHub-hosted runners to avoid policy abuse
+          max_cap=30
+          if ! mins_int=$(printf "%d" "$mins" 2>/dev/null); then
+            mins_int=5
+          fi
+          if [ "$mins_int" -gt "$max_cap" ]; then
+            echo "Requested runtime ${mins_int} > ${max_cap}. Capping to ${max_cap} minutes."
+            mins_int=$max_cap
+          fi
+          end=$((mins_int * 60))
+          echo "Keeping the job active for ${mins_int} minute(s) (${end} seconds)..."
+          sleep "$end"
+          echo "Keep-alive finished."
