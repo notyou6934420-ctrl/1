@@ -1,0 +1,74 @@
+name: wg-config-generator
+
+on:
+  workflow_dispatch:
+    inputs:
+      runtime_minutes:
+        description: "How many minutes to keep the job active"
+        required: false
+        default: "5"
+      quick_test:
+        description: "Force quick 5-minute test"
+        required: false
+        default: "false"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install WireGuard
+        run: |
+          sudo apt update
+          sudo apt install -y wireguard-tools
+
+      - name: Generate private/public keys
+        run: |
+          umask 077
+          wg genkey | tee privatekey | wg pubkey > publickey
+
+      - name: Create wg0.conf
+        run: |
+          cat <<EOF > wg0.conf
+[Interface]
+PrivateKey = $(cat privatekey)
+Address = 10.8.0.2/24
+DNS = 1.1.1.1
+
+[Peer]
+# Dummy public key placeholder
+PublicKey = AAAAAAAAAAAAAAAAAAAA=
+# Dummy server endpoint placeholder
+Endpoint = 0.0.0.0:51820
+AllowedIPs = 0.0.0.0/0, ::/0
+PersistentKeepalive = 25
+EOF
+
+      - name: Compress config
+        run: |
+          zip wireguard_config.zip wg0.conf privatekey publickey
+
+      - name: Upload to GoFile
+        env:
+          GOFILE_TOKEN: ${{ secrets.GOFILE_TOKEN }}
+        run: |
+          UPLOAD=$(curl -F "file=@wireguard_config.zip" \
+            -F "token=${GOFILE_TOKEN}" \
+            "https://api.gofile.io/upload")
+          echo "$UPLOAD"
+          echo "$UPLOAD" > gofile_response.json
+
+      - name: Show download link
+        run: |
+          cat gofile_response.json
+
+      - name: Keep alive
+        run: |
+          mins=${{ inputs.runtime_minutes }}
+          if [ "${{ inputs.quick_test }}" = "true" ]; then mins=5; fi
+          # Safety cap — GitHub does NOT allow long runner usage
+          [ "$mins" -gt 30 ] && mins=30
+          end=$((mins*60))
+          echo "Keeping job active for $mins minutes..."
+          sleep $end
+          echo "Done."
