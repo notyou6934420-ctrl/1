@@ -17,18 +17,23 @@ jobs:
       - name: Install Android SDK
         run: |
           wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O sdk.zip
-          mkdir android-sdk
-          unzip sdk.zip -d android-sdk
-          yes | android-sdk/cmdline-tools/bin/sdkmanager --licenses
-          android-sdk/cmdline-tools/bin/sdkmanager "platform-tools" "emulator" "platforms;android-31" "system-images;android-31;google_apis;x86_64"
+          mkdir -p android-sdk/cmdline-tools
+          unzip sdk.zip -d android-sdk/cmdline-tools
+          export ANDROID_HOME=$PWD/android-sdk
+          export PATH=$ANDROID_HOME/cmdline-tools/cmdline-tools/bin:$PATH
+          yes | sdkmanager --licenses
+          sdkmanager "platform-tools" "emulator" "platforms;android-31" "system-images;android-31;google_apis;x86_64"
 
-      - name: Create Android 12 AVD
+      - name: Create AVD
         run: |
-          echo "no" | android-sdk/cmdline-tools/bin/avdmanager create avd -n android12 -k "system-images;android-31;google_apis;x86_64"
+          export ANDROID_HOME=$PWD/android-sdk
+          export PATH=$ANDROID_HOME/cmdline-tools/cmdline-tools/bin:$PATH
+          echo "no" | avdmanager create avd -n android12 -k "system-images;android-31;google_apis;x86_64"
 
-      - name: Start Emulator Headless
+      - name: Start Emulator
         run: |
-          nohup android-sdk/emulator/emulator -avd android12 -no-window -no-audio -gpu swiftshader_indirect &
+          export ANDROID_HOME=$PWD/android-sdk
+          nohup $ANDROID_HOME/emulator/emulator -avd android12 -no-window -no-audio -gpu swiftshader_indirect > emulator.log 2>&1 &
           sleep 60
 
       - name: Install Tailscale
@@ -36,12 +41,12 @@ jobs:
           curl -fsSL https://tailscale.com/install.sh | sh
           sudo tailscale up --authkey=tskey-auth-kk5XXvZJFA11CNTRL-vCh5MqGZeSFr9CnjZ4FdSFRsz4Q7vsL6 --hostname github-android
 
-      - name: Start Desktop + VNC
+      - name: Start VNC
         run: |
           Xvfb :1 -screen 0 1280x720x16 &
           export DISPLAY=:1
           fluxbox &
           x11vnc -display :1 -nopw -forever -shared &
 
-      - name: Keep Alive
-        run: sleep 6h
+      - name: Keep Runner Alive
+        run: sleep 21600
