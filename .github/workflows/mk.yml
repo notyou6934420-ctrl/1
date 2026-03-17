@@ -1,0 +1,122 @@
+name: Ultra Fast API Requester
+
+on:
+  # Manual trigger from GitHub UI
+  workflow_dispatch:
+    inputs:
+      threads:
+        description: 'Number of threads'
+        required: true
+        default: '30'
+        type: string
+      delay:
+        description: 'Delay between requests (seconds)'
+        required: true
+        default: '0.003'
+        type: string
+      duration:
+        description: 'Run duration (minutes, 0 for unlimited)'
+        required: true
+        default: '5'
+        type: string
+      url:
+        description: 'Target URL'
+        required: true
+        default: 'https://mknetworkbd.com/API/api_handler.php'
+        type: string
+      range:
+        description: 'Phone range'
+        required: true
+        default: '9929876XXXXX'
+        type: string
+  
+  # Scheduled runs
+  schedule:
+    # Run every hour
+    - cron: '0 * * * *'
+    # Run at specific times
+    - cron: '*/30 * * * *'  # Every 30 minutes
+  
+  # Trigger on push to main branch (optional)
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/fast-requester.yml'
+      - 'requester.py'
+
+jobs:
+  fast-requester:
+    name: Ultra Fast Requester
+    runs-on: ubuntu-latest
+    
+    # Timeout for the entire job
+    timeout-minutes: ${{ github.event.inputs.duration != '' && github.event.inputs.duration || '10' }}
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests==2.31.0
+        # Optional: Install faster HTTP libraries
+        pip install urllib3==2.0.7
+    
+    - name: Create requester script
+      run: |
+        cat > requester.py << 'EOF'
+        # PASTE THE ENHANCED SCRIPT HERE
+        EOF
+    
+    - name: Make script executable
+      run: chmod +x requester.py
+    
+    - name: Run ultra fast requester
+      env:
+        THREADS: ${{ github.event.inputs.threads || '30' }}
+        DELAY: ${{ github.event.inputs.delay || '0.003' }}
+        TARGET_URL: ${{ github.event.inputs.url || 'https://mknetworkbd.com/API/api_handler.php' }}
+        PHONE_RANGE: ${{ github.event.inputs.range || '9929876XXXXX' }}
+      run: |
+        echo "🚀 Starting with $THREADS threads"
+        echo "Target: $TARGET_URL"
+        echo "Range: $PHONE_RANGE"
+        echo "Delay: $DELAY seconds"
+        echo "================================"
+        
+        # Run with timeout if specified
+        if [ "${{ github.event.inputs.duration }}" != "0" ] && [ "${{ github.event.inputs.duration }}" != "" ]; then
+          timeout ${{ github.event.inputs.duration }}m python requester.py
+        else
+          python requester.py
+        fi
+    
+    - name: Upload logs as artifact
+      if: always()  # Upload even if job fails
+      uses: actions/upload-artifact@v4
+      with:
+        name: requester-logs
+        path: |
+          requester.log
+          *.csv
+        retention-days: 7
+    
+    - name: Send notification on failure
+      if: failure()
+      run: |
+        echo "❌ Requester job failed!"
+        # You can add webhook notifications here
+        # curl -X POST https://api.telegram.org/...
+
+    - name: Display final statistics
+      if: always()
+      run: |
+        echo "📊 Job completed at $(date)"
+        echo "Check artifacts for detailed logs"
