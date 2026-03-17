@@ -1,7 +1,6 @@
 name: Ultra Fast API Requester
 
 on:
-  # Manual trigger from GitHub UI
   workflow_dispatch:
     inputs:
       threads:
@@ -29,232 +28,218 @@ on:
         required: true
         default: '9929876XXXXX'
         type: string
-  
-  # Scheduled runs
-  schedule:
-    - cron: '0 * * * *'
-    - cron: '*/30 * * * *'
-  
-  # Trigger on push
-  push:
-    branches: [ main ]
-    paths:
-      - '.github/workflows/mk.yml'
-      - 'requester.py'
 
 jobs:
   fast-requester:
     name: Ultra Fast Requester
     runs-on: ubuntu-latest
-    
-    # Convert string to number for timeout-minutes
     timeout-minutes: ${{ fromJSON(github.event.inputs.duration || '10') }}
-    
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-    
+
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
         cache: 'pip'
-    
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install requests==2.31.0
-    
+
     - name: Create requester script
       run: |
         cat > requester.py << 'EOF'
-import requests
-import time
-import threading
-from queue import Queue
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import signal
-import sys
-import os
-import logging
-from datetime import datetime
-import json
+        import requests
+        import time
+        import threading
+        from queue import Queue
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import signal
+        import sys
+        import os
+        import logging
+        from datetime import datetime
+        import json
 
-# Configuration from environment variables
-NUM_THREADS = int(os.getenv('THREADS', '30'))
-REQUEST_DELAY = float(os.getenv('DELAY', '0.003'))
-TARGET_URL = os.getenv('TARGET_URL', 'https://mknetworkbd.com/API/api_handler.php')
-PHONE_RANGE = os.getenv('PHONE_RANGE', '9929876XXXXX')
+        # Configuration from environment variables
+        NUM_THREADS = int(os.getenv('THREADS', '30'))
+        REQUEST_DELAY = float(os.getenv('DELAY', '0.003'))
+        TARGET_URL = os.getenv('TARGET_URL', 'https://mknetworkbd.com/API/api_handler.php')
+        PHONE_RANGE = os.getenv('PHONE_RANGE', '9929876XXXXX')
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('requester.log'),
-        logging.StreamHandler()
-    ]
-)
+        # Setup logging
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler('requester.log'),
+                logging.StreamHandler()
+            ]
+        )
 
-RUNNING = True
+        RUNNING = True
 
-headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "cookie": "mk_lang=en; mk_remember=fb1b80350fee:0797260b16fa223e8588dca475e12dfebd764d5d98a48b8b2dfc6e6b91a30172; PHPSESSID=gmo9mkdls75drgheogpqrjn3ik",
-    "Content-Type": "application/x-www-form-urlencoded",
-    "Connection": "keep-alive",
-}
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "cookie": "mk_lang=en; mk_remember=fb1b80350fee:0797260b16fa223e8588dca475e12dfebd764d5d98a48b8b2dfc6e6b91a30172; PHPSESSID=gmo9mkdls75drgheogpqrjn3ik",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Connection": "keep-alive",
+        }
 
-base_data = {
-    "action": "get_number",
-    "range": PHONE_RANGE
-}
+        base_data = {
+            "action": "get_number",
+            "range": PHONE_RANGE
+        }
 
-# Statistics
-request_count = 0
-success_count = 0
-error_count = 0
-response_codes = {}
-stats_lock = threading.Lock()
-start_time = time.time()
+        # Statistics
+        request_count = 0
+        success_count = 0
+        error_count = 0
+        response_codes = {}
+        stats_lock = threading.Lock()
+        start_time = time.time()
 
-# Session pool
-session_queue = Queue()
+        # Session pool
+        session_queue = Queue()
 
-def create_session():
-    """Create a session with connection pooling"""
-    session = requests.Session()
-    session.headers.update(headers)
-    adapter = requests.adapters.HTTPAdapter(
-        pool_connections=200,
-        pool_maxsize=200,
-        max_retries=3,
-        pool_block=False
-    )
-    session.mount('http://', adapter)
-    session.mount('https://', adapter)
-    return session
+        def create_session():
+            """Create a session with connection pooling"""
+            session = requests.Session()
+            session.headers.update(headers)
+            adapter = requests.adapters.HTTPAdapter(
+                pool_connections=200,
+                pool_maxsize=200,
+                max_retries=3,
+                pool_block=False
+            )
+            session.mount('http://', adapter)
+            session.mount('https://', adapter)
+            return session
 
-# Pre-create sessions
-logging.info(f"Creating {NUM_THREADS * 2} sessions...")
-for _ in range(NUM_THREADS * 2):
-    session_queue.put(create_session())
+        # Pre-create sessions
+        logging.info(f"Creating {NUM_THREADS * 2} sessions...")
+        for _ in range(NUM_THREADS * 2):
+            session_queue.put(create_session())
 
-def signal_handler(sig, frame):
-    """Handle Ctrl+C gracefully"""
-    global RUNNING
-    logging.info("\\nStopping threads... Please wait...")
-    RUNNING = False
+        def signal_handler(sig, frame):
+            """Handle Ctrl+C gracefully"""
+            global RUNNING
+            logging.info("\nStopping threads... Please wait...")
+            RUNNING = False
 
-signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGINT, signal_handler)
 
-def save_stats():
-    """Save statistics to file"""
-    elapsed = time.time() - start_time
-    stats = {
-        'timestamp': datetime.now().isoformat(),
-        'total_requests': request_count,
-        'successful': success_count,
-        'errors': error_count,
-        'response_codes': response_codes,
-        'duration': elapsed,
-        'rps': request_count / elapsed if request_count > 0 and elapsed > 0 else 0
-    }
-    
-    with open('statistics.json', 'w') as f:
-        json.dump(stats, f, indent=2)
-
-def worker(thread_id):
-    """Worker function for each thread"""
-    global request_count, success_count, error_count
-    
-    while RUNNING:
-        try:
-            # Get session from pool
-            session = session_queue.get()
-            
-            # Make request
-            req_start = time.time()
-            response = session.post(TARGET_URL, data=base_data, timeout=10)
-            req_time = time.time() - req_start
-            
-            # Update statistics
-            with stats_lock:
-                request_count += 1
-                if response.status_code == 200:
-                    success_count += 1
-                else:
-                    error_count += 1
-                
-                response_codes[response.status_code] = response_codes.get(response.status_code, 0) + 1
-                
-                # Periodic logging
-                if request_count % 100 == 0:
-                    elapsed = time.time() - start_time
-                    rps = request_count / elapsed if elapsed > 0 else 0
-                    logging.info(f"Req: {request_count} | OK: {success_count} | "
-                               f"Err: {error_count} | RPS: {rps:.1f}")
-            
-            # Return session to pool
-            session_queue.put(session)
-            
-            # Minimal delay
-            time.sleep(REQUEST_DELAY)
-            
-        except Exception as e:
-            with stats_lock:
-                error_count += 1
-                request_count += 1
-            
-            # Create new session on error
-            new_session = create_session()
-            session_queue.put(new_session)
-            time.sleep(0.1)
-
-def main():
-    logging.info(f"🚀 Starting ultra-fast requester with {NUM_THREADS} threads")
-    logging.info(f"Target URL: {TARGET_URL}")
-    logging.info(f"Phone range: {PHONE_RANGE}")
-    logging.info(f"Delay: {REQUEST_DELAY}s")
-    logging.info("Press Ctrl+C to stop\\n")
-    
-    # Create thread pool
-    with ThreadPoolExecutor(max_workers=NUM_THREADS) as executor:
-        futures = [executor.submit(worker, i) for i in range(NUM_THREADS)]
-        
-        try:
-            for future in as_completed(futures):
-                future.result()
-        except KeyboardInterrupt:
-            pass
-        finally:
-            # Final statistics
+        def save_stats():
+            """Save statistics to file"""
             elapsed = time.time() - start_time
-            logging.info("\\n" + "="*50)
-            logging.info("📊 FINAL STATISTICS:")
-            logging.info(f"Total Requests: {request_count}")
-            logging.info(f"Successful: {success_count}")
-            logging.info(f"Errors: {error_count}")
-            logging.info(f"Time elapsed: {elapsed:.2f} seconds")
-            logging.info(f"Average RPS: {request_count/elapsed:.1f}")
-            logging.info(f"Response codes: {response_codes}")
-            logging.info("="*50)
+            stats = {
+                'timestamp': datetime.now().isoformat(),
+                'total_requests': request_count,
+                'successful': success_count,
+                'errors': error_count,
+                'response_codes': response_codes,
+                'duration': elapsed,
+                'rps': request_count / elapsed if request_count > 0 and elapsed > 0 else 0
+            }
             
-            # Save final stats
-            save_stats()
-            
-            # Clean up sessions
-            while not session_queue.empty():
-                session = session_queue.get()
-                session.close()
+            with open('statistics.json', 'w') as f:
+                json.dump(stats, f, indent=2)
 
-if __name__ == "__main__":
-    main()
-EOF
-    
+        def worker(thread_id):
+            """Worker function for each thread"""
+            global request_count, success_count, error_count
+            
+            while RUNNING:
+                try:
+                    # Get session from pool
+                    session = session_queue.get()
+                    
+                    # Make request
+                    req_start = time.time()
+                    response = session.post(TARGET_URL, data=base_data, timeout=10)
+                    req_time = time.time() - req_start
+                    
+                    # Update statistics
+                    with stats_lock:
+                        request_count += 1
+                        if response.status_code == 200:
+                            success_count += 1
+                        else:
+                            error_count += 1
+                        
+                        response_codes[response.status_code] = response_codes.get(response.status_code, 0) + 1
+                        
+                        # Periodic logging
+                        if request_count % 100 == 0:
+                            elapsed = time.time() - start_time
+                            rps = request_count / elapsed if elapsed > 0 else 0
+                            logging.info(f"Req: {request_count} | OK: {success_count} | "
+                                       f"Err: {error_count} | RPS: {rps:.1f}")
+                    
+                    # Return session to pool
+                    session_queue.put(session)
+                    
+                    # Minimal delay
+                    time.sleep(REQUEST_DELAY)
+                    
+                except Exception as e:
+                    with stats_lock:
+                        error_count += 1
+                        request_count += 1
+                    
+                    # Create new session on error
+                    new_session = create_session()
+                    session_queue.put(new_session)
+                    time.sleep(0.1)
+
+        def main():
+            logging.info(f"🚀 Starting ultra-fast requester with {NUM_THREADS} threads")
+            logging.info(f"Target URL: {TARGET_URL}")
+            logging.info(f"Phone range: {PHONE_RANGE}")
+            logging.info(f"Delay: {REQUEST_DELAY}s")
+            logging.info("Press Ctrl+C to stop\n")
+            
+            # Create thread pool
+            with ThreadPoolExecutor(max_workers=NUM_THREADS) as executor:
+                futures = [executor.submit(worker, i) for i in range(NUM_THREADS)]
+                
+                try:
+                    for future in as_completed(futures):
+                        future.result()
+                except KeyboardInterrupt:
+                    pass
+                finally:
+                    # Final statistics
+                    elapsed = time.time() - start_time
+                    logging.info("\n" + "="*50)
+                    logging.info("📊 FINAL STATISTICS:")
+                    logging.info(f"Total Requests: {request_count}")
+                    logging.info(f"Successful: {success_count}")
+                    logging.info(f"Errors: {error_count}")
+                    logging.info(f"Time elapsed: {elapsed:.2f} seconds")
+                    logging.info(f"Average RPS: {request_count/elapsed:.1f}")
+                    logging.info(f"Response codes: {response_codes}")
+                    logging.info("="*50)
+                    
+                    # Save final stats
+                    save_stats()
+                    
+                    # Clean up sessions
+                    while not session_queue.empty():
+                        session = session_queue.get()
+                        session.close()
+
+        if __name__ == "__main__":
+            main()
+        EOF
+
     - name: Make script executable
       run: chmod +x requester.py
-    
+
     - name: Run ultra fast requester
       env:
         THREADS: ${{ github.event.inputs.threads || '30' }}
@@ -271,14 +256,13 @@ EOF
         # Convert duration to seconds for timeout command
         DURATION=${{ github.event.inputs.duration || '10' }}
         if [ "$DURATION" != "0" ]; then
-          # Convert minutes to seconds for timeout command
           TIMEOUT_SECONDS=$((DURATION * 60))
           echo "Running for $DURATION minutes ($TIMEOUT_SECONDS seconds)"
           timeout $TIMEOUT_SECONDS python requester.py || true
         else
           python requester.py
         fi
-    
+
     - name: Upload logs as artifact
       if: always()
       uses: actions/upload-artifact@v4
@@ -288,7 +272,7 @@ EOF
           requester.log
           statistics.json
         retention-days: 7
-    
+
     - name: Display final statistics
       if: always()
       run: |
