@@ -1,60 +1,16 @@
-name: Ultra Fast API Requester
-
-on:
-  workflow_dispatch:
-    inputs:
-      threads:
-        description: 'Number of threads'
-        required: true
-        default: '30'
-        type: string
-      delay:
-        description: 'Delay between requests (seconds)'
-        required: true
-        default: '0.003'
-        type: string
-      duration:
-        description: 'Run duration (minutes)'
-        required: true
-        default: '5'
-        type: string
-
-jobs:
-  fast-requester:
-    name: Ultra Fast Requester
-    runs-on: ubuntu-latest
-    timeout-minutes: ${{ fromJSON(github.event.inputs.duration || '10') }}
-
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install requests
-
-    - name: Run ultra fast requester
-      env:
-        THREADS: ${{ github.event.inputs.threads || '30' }}
-        DELAY: ${{ github.event.inputs.delay || '0.003' }}
-        DURATION: ${{ github.event.inputs.duration || '5' }}
-      run: |
-        python -c "
+- name: Run ultra fast requester
+  env:
+    THREADS: ${{ github.event.inputs.threads || '30' }}
+    DELAY: ${{ github.event.inputs.delay || '0.003' }}
+    DURATION: ${{ github.event.inputs.duration || '5' }}
+  run: |
+    python << 'EOF'
 import requests
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import os
-import signal
-import sys
 
-# Configuration
 NUM_THREADS = int(os.getenv('THREADS', '30'))
 REQUEST_DELAY = float(os.getenv('DELAY', '0.003'))
 DURATION = int(os.getenv('DURATION', '5')) * 60
@@ -62,10 +18,9 @@ TARGET_URL = 'https://mknetworkbd.com/API/api_handler.php'
 PHONE_RANGE = '9929876XXXXX'
 
 headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    'cookie': 'mk_lang=en; mk_remember=fb1b80350fee:0797260b16fa223e8588dca475e12dfebd764d5d98a48b8b2dfc6e6b91a30172; PHPSESSID=gmo9mkdls75drgheogpqrjn3ik',
+    'User-Agent': 'Mozilla/5.0',
+    'cookie': 'mk_lang=en;',
     'Content-Type': 'application/x-www-form-urlencoded',
-    'Connection': 'keep-alive',
 }
 
 data = {
@@ -73,81 +28,45 @@ data = {
     'range': PHONE_RANGE
 }
 
-# Statistics
 request_count = 0
 success_count = 0
 error_count = 0
-stats_lock = threading.Lock()
+lock = threading.Lock()
 start_time = time.time()
 running = True
 
-def worker(thread_id):
+def worker():
     global request_count, success_count, error_count
-    
     session = requests.Session()
     session.headers.update(headers)
-    
+
     while running:
         try:
-            response = session.post(TARGET_URL, data=data, timeout=5)
-            
-            with stats_lock:
+            r = session.post(TARGET_URL, data=data, timeout=5)
+            with lock:
                 request_count += 1
-                if response.status_code == 200:
+                if r.status_code == 200:
                     success_count += 1
                 else:
                     error_count += 1
-                
-                if request_count % 50 == 0:
-                    elapsed = time.time() - start_time
-                    rps = request_count / elapsed
-                    print(f'\r📊 Req: {request_count} | OK: {success_count} | Err: {error_count} | RPS: {rps:.1f}', end='', flush=True)
-            
-            time.sleep(REQUEST_DELAY)
-            
-        except Exception:
-            with stats_lock:
+        except:
+            with lock:
                 error_count += 1
                 request_count += 1
-            time.sleep(0.1)
-    
-    session.close()
 
-print(f'🚀 Starting Ultra Fast Requester')
-print(f'📈 Threads: {NUM_THREADS}')
-print(f'⏱️  Delay: {REQUEST_DELAY}s')
-print(f'⏰ Duration: {DURATION/60} minutes')
-print(f'🎯 Target: {TARGET_URL}')
-print('=' * 50)
+        time.sleep(REQUEST_DELAY)
 
-# Create thread pool
-with ThreadPoolExecutor(max_workers=NUM_THREADS) as executor:
-    futures = [executor.submit(worker, i) for i in range(NUM_THREADS)]
-    
-    try:
-        time.sleep(DURATION)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        running = False
-        time.sleep(2)
-        
-        elapsed = time.time() - start_time
-        print('\n' + '=' * 50)
-        print('📊 FINAL STATISTICS:')
-        print(f'Total Requests: {request_count}')
-        print(f'Successful: {success_count}')
-        print(f'Errors: {error_count}')
-        print(f'Time: {elapsed:.1f}s')
-        print(f'Average RPS: {request_count/elapsed:.1f}')
-        print('=' * 50)
-"
+with ThreadPoolExecutor(max_workers=NUM_THREADS) as ex:
+    for _ in range(NUM_THREADS):
+        ex.submit(worker)
 
-    - name: Upload logs
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: requester-logs
-        path: |
-          *.log
-        retention-days: 7
+    time.sleep(DURATION)
+    running = False
+
+elapsed = time.time() - start_time
+print("Done")
+print("Requests:", request_count)
+print("Success:", success_count)
+print("Errors:", error_count)
+print("RPS:", request_count / elapsed)
+EOF
