@@ -166,7 +166,7 @@ jobs:
       # --- Continue with the rest after CRD is launched ---
       - name: Decide hostname + runtime
         run: |
-          if ("${{ inputs.rdp_count }}" -gt 1) { $hn = "bullet${{ matrix.id }}" } else { $hn = "bullet" }
+          if ("${{ inputs.rdp_count }}" -gt 1) { $hn = "Win11${{ matrix.id }}" } else { $hn = "Win11" }
           "TS_HOSTNAME=$hn" | Out-File -Append $env:GITHUB_ENV
 
           function Yes($v){ "$v" -match '^(?i:true|1|yes|on)$' }
