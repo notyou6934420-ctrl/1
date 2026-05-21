@@ -1,4 +1,4 @@
-name: RDP + Tailscale + Website
+name: RDP + Tailscale + RustDesk + (Optional) Chrome Remote Desktop (A)
 
 on:
   workflow_dispatch:
@@ -36,6 +36,7 @@ jobs:
     outputs:
       matrix: ${{ steps.mk.outputs.matrix }}
       multi:  ${{ steps.mk.outputs.multi }}
+      crd_enabled: ${{ steps.mk.outputs.crd_enabled }}
     steps:
       - id: mk
         run: |
@@ -53,41 +54,25 @@ jobs:
           $json = @{ include = $inc } | ConvertTo-Json -Compress
           "matrix=$json" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
 
-          # NEW: multi flag
+          # multi flag
           $multi = if ($n -gt 1) { '1' } else { '0' }
           "multi=$multi" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+          
+          # CRD enabled flag
+          $crd_enabled = if ($crd.Length -gt 0) { '1' } else { '0' }
+          "crd_enabled=$crd_enabled" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
 
-  job_2_crd_flag:
+  job_2_crd_install:
     needs: job_1_setup_matrix
     runs-on: windows-latest
     strategy:
       matrix: ${{ fromJson(needs.job_1_setup_matrix.outputs.matrix) }}
       max-parallel: 10
     timeout-minutes: 370
+    if: needs.job_1_setup_matrix.outputs.crd_enabled == '1'
     env:
       RDP_USER: Bullettemporary
       RDP_PASS: Bullet@12345
-    steps:
-      - name: Set CRD flag early (safe read)
-        run: |
-          $crd = @'
-          ${{ inputs.crd_code }}
-          '@.Trim()
-          if ($crd.Length -gt 0) { "CRD_ENABLED=1" | Out-File -Append $env:GITHUB_ENV } else { "CRD_ENABLED=0" | Out-File -Append $env:GITHUB_ENV }
-          Write-Host "CRD_ENABLED=$([int]($crd.Length -gt 0))"
-
-  job_3_install_crd:
-    needs: job_2_crd_flag
-    runs-on: windows-latest
-    strategy:
-      matrix: ${{ fromJson(needs.job_1_setup_matrix.outputs.matrix) }}
-      max-parallel: 10
-    timeout-minutes: 370
-    env:
-      RDP_USER: Bullettemporary
-      RDP_PASS: Bullet@12345
-      CRD_ENABLED: ${{ needs.job_2_crd_flag.outputs.crd_enabled }}
-    if: env.CRD_ENABLED == '1'
     steps:
       - name: Install Chrome Remote Desktop Host (if missing)
         run: |
@@ -119,18 +104,17 @@ jobs:
             Write-Host "CRD host already installed."
           }
 
-  job_4_run_crd:
-    needs: job_3_install_crd
+  job_3_crd_run:
+    needs: [job_1_setup_matrix, job_2_crd_install]
     runs-on: windows-latest
     strategy:
       matrix: ${{ fromJson(needs.job_1_setup_matrix.outputs.matrix) }}
       max-parallel: 10
     timeout-minutes: 370
+    if: needs.job_1_setup_matrix.outputs.crd_enabled == '1'
     env:
       RDP_USER: Bullettemporary
       RDP_PASS: Bullet@12345
-      CRD_ENABLED: ${{ needs.job_2_crd_flag.outputs.crd_enabled }}
-    if: env.CRD_ENABLED == '1'
     steps:
       - name: Run Chrome Remote Desktop (accept raw code / full cmd / url) with PIN
         run: |
@@ -164,18 +148,17 @@ jobs:
           }
           Write-Host "CRD launch step completed with PIN."
 
-  job_5_verify_crd:
-    needs: job_4_run_crd
+  job_4_crd_verify:
+    needs: [job_1_setup_matrix, job_3_crd_run]
     runs-on: windows-latest
     strategy:
       matrix: ${{ fromJson(needs.job_1_setup_matrix.outputs.matrix) }}
       max-parallel: 10
     timeout-minutes: 370
+    if: needs.job_1_setup_matrix.outputs.crd_enabled == '1'
     env:
       RDP_USER: Bullettemporary
       RDP_PASS: Bullet@12345
-      CRD_ENABLED: ${{ needs.job_2_crd_flag.outputs.crd_enabled }}
-    if: env.CRD_ENABLED == '1'
     steps:
       - name: Verify CRD registration (service + recent logs)
         run: |
@@ -197,8 +180,8 @@ jobs:
             }
           } else { Write-Host "CRD log directory not found: $logDir" }
 
-  job_6_hostname_runtime:
-    needs: job_5_verify_crd
+  job_5_hostname_runtime:
+    needs: job_1_setup_matrix
     runs-on: windows-latest
     strategy:
       matrix: ${{ fromJson(needs.job_1_setup_matrix.outputs.matrix) }}
@@ -222,17 +205,17 @@ jobs:
           "RUNTIME_MINUTES=$runtime" | Out-File -Append $env:GITHUB_ENV
           Write-Host "Hostname: $hn  | Runtime: $runtime"
 
-  job_7_purge_devices:
-    needs: job_6_hostname_runtime
+  job_6_purge_devices:
+    needs: [job_1_setup_matrix, job_5_hostname_runtime]
     runs-on: windows-latest
     strategy:
       matrix: ${{ fromJson(needs.job_1_setup_matrix.outputs.matrix) }}
       max-parallel: 10
     timeout-minutes: 370
+    if: needs.job_1_setup_matrix.outputs.multi == '0'
     env:
       RDP_USER: Bullettemporary
       RDP_PASS: Bullet@12345
-    if: ${{ needs.job_1_setup_matrix.outputs.multi == '0' }}
     steps:
       - name: Purge bullet* devices (single-instance only)
         run: |
@@ -253,8 +236,8 @@ jobs:
             Write-Host "Purge disabled."
           }
 
-  job_8_install_tailscale:
-    needs: job_7_purge_devices
+  job_7_install_tailscale:
+    needs: [job_1_setup_matrix, job_6_purge_devices]
     runs-on: windows-latest
     strategy:
       matrix: ${{ fromJson(needs.job_1_setup_matrix.outputs.matrix) }}
@@ -280,8 +263,8 @@ jobs:
           "TAILSCALE_IP=$ip4" | Out-File -Append $env:GITHUB_ENV
           Write-Host "Tailscale IPv4: $ip4"
 
-  job_9_enable_rdp:
-    needs: job_8_install_tailscale
+  job_8_enable_rdp:
+    needs: [job_1_setup_matrix, job_7_install_tailscale]
     runs-on: windows-latest
     strategy:
       matrix: ${{ fromJson(needs.job_1_setup_matrix.outputs.matrix) }}
@@ -309,8 +292,8 @@ jobs:
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop" | Out-Null
           Write-Host "RDP ready. user=$u pass=$p host=$env:TS_HOSTNAME ip=$env:TAILSCALE_IP"
 
-  job_10_install_python_libs:
-    needs: job_9_enable_rdp
+  job_9_install_python_libs:
+    needs: [job_1_setup_matrix, job_8_enable_rdp]
     runs-on: windows-latest
     strategy:
       matrix: ${{ fromJson(needs.job_1_setup_matrix.outputs.matrix) }}
@@ -326,8 +309,8 @@ jobs:
           python -m pip install --force-reinstall pyautogui pynput pillow
           python -c "import pyautogui, pynput, PIL; print('Python libs OK')"
 
-  job_11_install_rustdesk:
-    needs: job_10_install_python_libs
+  job_10_install_rustdesk:
+    needs: [job_1_setup_matrix, job_9_install_python_libs]
     runs-on: windows-latest
     strategy:
       matrix: ${{ fromJson(needs.job_1_setup_matrix.outputs.matrix) }}
@@ -355,8 +338,8 @@ jobs:
           if (-not (Test-Path $rdExe)) { Write-Error "RustDesk not found after install"; exit 1 }
           Write-Host "RustDesk installed."
 
-  job_12_open_ports:
-    needs: job_11_install_rustdesk
+  job_11_open_ports:
+    needs: [job_1_setup_matrix, job_10_install_rustdesk]
     runs-on: windows-latest
     strategy:
       matrix: ${{ fromJson(needs.job_1_setup_matrix.outputs.matrix) }}
@@ -377,8 +360,8 @@ jobs:
           netsh advfirewall firewall delete rule name=$udpName 2>$null
           netsh advfirewall firewall add rule name=$udpName dir=in action=allow protocol=UDP localport=21116
 
-  job_13_launch_rustdesk:
-    needs: job_12_open_ports
+  job_12_launch_rustdesk:
+    needs: [job_1_setup_matrix, job_11_open_ports]
     runs-on: windows-latest
     strategy:
       matrix: ${{ fromJson(needs.job_1_setup_matrix.outputs.matrix) }}
@@ -408,8 +391,8 @@ jobs:
           $json = $curlResult | ConvertFrom-Json
           if ($json.status -eq "ok") { "SCREENSHOT_URL=$($json.data.downloadPage)" | Out-File -Append $env:GITHUB_ENV }
 
-  job_14_keep_alive:
-    needs: job_13_launch_rustdesk
+  job_13_keep_alive:
+    needs: [job_1_setup_matrix, job_12_launch_rustdesk]
     runs-on: windows-latest
     strategy:
       matrix: ${{ fromJson(needs.job_1_setup_matrix.outputs.matrix) }}
@@ -423,14 +406,15 @@ jobs:
         run: |
           $mins = [int]"${{ env.RUNTIME_MINUTES }}"
           $end = (Get-Date).AddMinutes($mins)
+          $crd_enabled = "${{ needs.job_1_setup_matrix.outputs.crd_enabled }}"
           while ((Get-Date) -lt $end) {
-            $mode = if ("$env:CRD_ENABLED" -eq '1') { '[CRD+RustDesk/RDP]' } else { '[RustDesk/RDP]' }
+            $mode = if ($crd_enabled -eq '1') { '[CRD+RustDesk/RDP]' } else { '[RustDesk/RDP]' }
             Write-Host ("$mode Heartbeat " + (Get-Date).ToString("HH:mm:ss") + " ends at " + $end.ToString("HH:mm:ss") + " | RS URL: $env:SCREENSHOT_URL")
             Start-Sleep -Seconds 60
           }
 
-  job_15_dispatch_next:
-    needs: job_14_keep_alive
+  job_14_dispatch_next:
+    needs: [job_1_setup_matrix, job_13_keep_alive]
     runs-on: windows-latest
     strategy:
       matrix: ${{ fromJson(needs.job_1_setup_matrix.outputs.matrix) }}
